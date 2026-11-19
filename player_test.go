@@ -183,7 +183,7 @@ func TestPlayerControlsAreTheBottomBar(t *testing.T) {
 		"width:min(680px,calc(100% - 24px));box-sizing:border-box",
 		"background:rgba(24,24,26,.42)",
 		"#seek{flex:0 1 320px",
-		"const hideAfter = 2000;",
+		"const hideAfter = touch ? 4000 : 2000;",
 	} {
 		if !strings.Contains(playerHTML, want) {
 			t.Fatalf("the player bar no longer has %q", want)

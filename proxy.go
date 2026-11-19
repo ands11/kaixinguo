@@ -387,6 +387,13 @@ body.dmoff #dm,body.pip #dm{display:none}
 #dmbtn .slash{display:none}
 body.dmoff #dmbtn{color:rgba(255,255,255,.5)}
 body.dmoff #dmbtn .slash{display:block}
+/* A finger is wider than a mouse and has no pointer: bigger controls, a
+   thumb that shows, and no volume or PiP the phone does itself. */
+body.touch #bar{bottom:8px;width:min(560px,calc(100% - 16px));padding:8px 12px 6px}
+body.touch #transport .ctl{width:36px;height:36px}
+body.touch #transport #play{width:40px;height:40px}
+body.touch input[type=range]::-webkit-slider-thumb{opacity:1;width:15px;height:15px}
+body.touch #vol,body.touch #pip{display:none}
 </style></head>
 <body><video id="v" playsinline preload="auto"></video>
 <div id="dm" aria-hidden="true"><span id="dmruler"></span></div>
@@ -458,7 +465,12 @@ const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
 let ep = '', last = 0, brightness = 1, hudTimer = 0, hideTimer = 0, seeking = false;
 let rate = 1;
 let hold = false, dblInterval = 500, chromeOn = false;
-const hideAfter = 2000;
+// A phone has no pointer to move, so the bar cannot follow it: a tap on
+// the picture brings the bar and the top buttons, and another puts them
+// away. A double tap changes nothing, since the screen is the theater.
+const touch = matchMedia('(pointer: coarse)').matches;
+if (touch) document.body.classList.add('touch');
+const hideAfter = touch ? 4000 : 2000;
 function send(type, extra) {
   fetch('event?type=' + type + '&ep=' + encodeURIComponent(ep) + (extra || '')).catch(() => {});
 }
@@ -733,9 +745,14 @@ vol.addEventListener('input', () => {
 vol.addEventListener('pointerup', () => vol.blur());
 // A click on the picture plays or pauses it, as the video's controls do;
 // a double click, held back until the system's double-click window has
-// passed, changes to or from the theater instead.
+// passed, changes to or from the theater instead. On a phone the click
+// shows and hides the bar, as the system's players do.
 let clickTimer = 0;
 v.addEventListener('click', e => {
+  if (touch) {
+    if (chromeOn) hideControls(); else showControls();
+    return;
+  }
   clearTimeout(clickTimer);
   if (e.detail > 1) return;
   // A little past the system interval, so the dblclick still wins at the
@@ -743,6 +760,7 @@ v.addEventListener('click', e => {
   clickTimer = setTimeout(() => kx.toggle(), dblInterval + 40);
 });
 v.addEventListener('dblclick', () => {
+  if (touch) return;
   clearTimeout(clickTimer);
   send('theater');
 });

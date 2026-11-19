@@ -233,7 +233,7 @@ func TestDanmakuFlush(t *testing.T) {
 	if a.cur.dmSent != 0 {
 		t.Fatal("lines went to the page before it played the episode")
 	}
-	a.cur.onPage = true
+	a.cur.loaded = true
 	a.flushDanmaku()
 	if a.cur.dmSent != 1 {
 		t.Fatalf("%d lines sent once the episode plays, want 1", a.cur.dmSent)
@@ -242,7 +242,7 @@ func TestDanmakuFlush(t *testing.T) {
 	if a.cur.dmSent != 1 {
 		t.Fatal("lines were sent twice")
 	}
-	a.cur = &playback{seriesID: "1", number: 2, gen: 2, epID: "e2", onPage: true}
+	a.cur = &playback{seriesID: "1", number: 2, gen: 2, epID: "e2", loaded: true}
 	a.flushDanmaku()
 	if a.cur.dmSent != 0 {
 		t.Fatal("the next episode got the last one's lines")

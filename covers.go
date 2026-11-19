@@ -144,10 +144,12 @@ func (cs *covers) bitmap(k, raw string) (bmp *ui.Bitmap, fresh bool, err error) 
 		return nil, true, err
 	}
 	if runtime.GOOS != "darwin" {
-		bmp, err := ui.DecodeBitmap(data) // no HEIC here
-		return bmp, true, err
+		if bmp, err := ui.DecodeBitmap(data); err == nil {
+			return bmp, true, nil // formats ui reads; HEIC it doesn't
+		}
 	}
-	// ImageIO reads HEIC, which the CDN serves, and scales it down.
+	// The CDN serves covers as HEIC, which ImageIO reads on macOS and
+	// the pure-Go decoder does elsewhere; both scale them down.
 	img, err := imageio.Decode(data, coverWidth)
 	if err != nil {
 		return nil, true, err

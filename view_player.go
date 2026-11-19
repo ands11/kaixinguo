@@ -9,9 +9,16 @@ import (
 )
 
 var (
-	black            = ui.RGB(0, 0, 0)
-	playerPanelColor = ui.RGB(22, 22, 24)
+	black = ui.RGB(0, 0, 0)
+	// The 选集 panel and sheet let the picture through a little.
+	playerPanelColor = ui.RGBA(22, 22, 24, 0.86)
 )
+
+// playerBg is the player's own ground. The framework fills the strip the
+// system bars' insets leave above the picture with the app theme's colour,
+// which the player's dark theme puts at #1a1a1a: the picture's ground uses
+// the same, so the two meet without a seam.
+var playerBg = ui.RGB(26, 26, 26)
 
 const playerPanelWidth = 296
 
@@ -31,8 +38,9 @@ func (a *app) playerView(c *ui.Context, id string) {
 		a.evalJS(fmt.Sprintf("kx.setDoubleClickInterval(%d)", doubleClickInterval().Milliseconds()))
 	}
 	// Theater is the player filling the screen. The episodes come back
-	// from the right edge, hidden until asked for.
-	theater := a.onPlayer && a.fullscreen
+	// from the right edge, hidden until asked for. A phone's screen is
+	// always the theater: there is no window to go back to.
+	theater := a.onPlayer && (a.fullscreen || onPhone)
 	if theater != a.theaterShown {
 		a.theaterShown = theater
 		a.panelOpen = false
@@ -44,16 +52,26 @@ func (a *app) playerView(c *ui.Context, id string) {
 	// last page lets the episode start.
 	if a.playerTutorialOn && !a.playerTutorialHeld {
 		a.playerTutorialHeld = true
-		a.evalJS("kx.setHold(true)")
+		a.holdPlayback(true)
 	}
 	dark := *ui.DarkTheme()
 	dark.Accent, dark.AccentText = c.Theme().Accent, c.Theme().AccentText
-	ui.Themed(c, &dark).Fill().Background(black).Children(func() {
+	ui.Themed(c, &dark).Fill().Background(playerBg).Children(func() {
 		var edgeHovered bool
 		ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-			ui.Box(c).Grow(1).MinWidth(0).Background(black).Children(func() {
+			// The video's box is the player's ground for the page's video,
+			// which paints itself; the native player's view is held under
+			// the app's surface, which must stay clear there for it to show
+			// through.
+			videoBg := playerBg
+			if a.player != nil {
+				videoBg = ui.Color{}
+			}
+			ui.Box(c).Grow(1).MinWidth(0).Background(videoBg).Children(func() {
 				if a.web != nil {
 					ui.WebView(c, a.web).Fill()
+				} else if a.player != nil {
+					a.nativeVideo(c)
 				}
 				a.playerOverlay(c)
 				// The edge is the theater's way into the episodes: the
@@ -63,13 +81,16 @@ func (a *app) playerView(c *ui.Context, id string) {
 				if theater {
 					edgeHovered = a.episodesEdge(c)
 				}
-				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(titleBarHeight).DragWindow()
+				if !a.compact {
+					ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(titleBarHeight).DragWindow()
+				}
 				// In the theater the top buttons keep the bottom bar company:
 				// both hide while the picture plays and come back on a move.
 				// The page cannot see the pointer over them, so they also
-				// stay while it rests there.
+				// stay while it rests there. A phone's layouts draw their
+				// own top rows, and its 选集 pulls up from the bottom.
 				hovered := false
-				if !theater || a.playerChrome || a.playerTopHovered {
+				if !onPhone && (!theater || a.playerChrome || a.playerTopHovered) {
 					exit := a.exitButton(c)
 					tools := a.playerToolbar(c, theater)
 					hovered = exit || tools
@@ -120,13 +141,13 @@ func (a *app) playerView(c *ui.Context, id string) {
 // the player's page, so they keep working when the focus leaves the page,
 // as it does when the theater's episodes close.
 func (a *app) playerShortcuts(c *ui.Context) {
-	c.OnShortcut(0, ui.KeySpace, func() { a.evalJS("kx.toggle()") })
-	c.OnShortcut(0, ui.KeyLeft, func() { a.evalJS("kx.seek(-5)") })
-	c.OnShortcut(0, ui.KeyRight, func() { a.evalJS("kx.seek(5)") })
-	c.OnShortcut(ui.Shift, ui.KeyLeft, func() { a.evalJS("kx.seek(-30)") })
-	c.OnShortcut(ui.Shift, ui.KeyRight, func() { a.evalJS("kx.seek(30)") })
-	c.OnShortcut(0, ui.KeyBracketLeft, func() { a.evalJS("kx.nudgeRate(-1)") })
-	c.OnShortcut(0, ui.KeyBracketRight, func() { a.evalJS("kx.nudgeRate(1)") })
+	c.OnShortcut(0, ui.KeySpace, a.togglePlay)
+	c.OnShortcut(0, ui.KeyLeft, func() { a.seekBy(-5) })
+	c.OnShortcut(0, ui.KeyRight, func() { a.seekBy(5) })
+	c.OnShortcut(ui.Shift, ui.KeyLeft, func() { a.seekBy(-30) })
+	c.OnShortcut(ui.Shift, ui.KeyRight, func() { a.seekBy(30) })
+	c.OnShortcut(0, ui.KeyBracketLeft, func() { a.nudgeRate(-1) })
+	c.OnShortcut(0, ui.KeyBracketRight, func() { a.nudgeRate(1) })
 	c.OnShortcut(0, ui.KeyD, func() { a.setDanmaku(!a.danmakuOn) })
 	c.OnShortcut(0, ui.KeyDown, func() { a.step(1) })
 	c.OnShortcut(0, ui.KeyUp, func() { a.step(-1) })
@@ -134,12 +155,17 @@ func (a *app) playerShortcuts(c *ui.Context) {
 }
 
 // playerEscape closes the episodes first, then leaves the theater, and
-// only then the player.
+// only then the player. A phone's player is always the theater, so its
+// back button opens the drawer, then leaves the player.
 func (a *app) playerEscape() {
 	switch {
+	case a.landscapeFull:
+		a.exitLandscapeFull()
+	case a.moreOpen:
+		a.moreOpen = false
 	case a.panelOpen:
 		a.closePanel()
-	case a.theaterShown:
+	case a.theaterShown && !onPhone:
 		a.exitTheater()
 	default:
 		a.leavePlayer()
@@ -179,6 +205,12 @@ func (a *app) exitTheater() {
 // leavePlayer leaves the player, and the full screen if the theater
 // entered it. A full screen the viewer opened before stays.
 func (a *app) leavePlayer() {
+	a.exitLandscapeFull()
+	a.moreOpen = false
+	a.liked = false
+	a.dmInput = ""
+	a.dmEditing = false
+	a.swipeDX, a.swipeDY, a.swipeHeld = 0, 0, false
 	a.panelOpen = false
 	a.panelSuppressed = false
 	a.panelJustClosed = false
@@ -213,10 +245,25 @@ func (a *app) setFullScreen(v bool) {
 // exitButton leaves the player from the video's top left, clear of the
 // window's traffic lights. It reports whether the pointer is over it.
 func (a *app) exitButton(c *ui.Context) bool {
-	b := ui.ButtonBase(c.Key("exit")).Absolute().Top((titleBarHeight-30)/2).Left(titleBarLeft(c, 10)).
-		Size(30, 30).Radius(15).Center().Material(glass.Glass{Interactive: true}).
+	size, left, top := float32(30), titleBarLeft(c, 10), float32((titleBarHeight-30)/2)
+	if a.compact {
+		size, left, top = 34, a.metrics().pad, 8
+	}
+	b := ui.ButtonBase(c.Key("exit")).Absolute().Top(top).Left(left).
+		Size(size, size).Radius(size/2).Center().
 		Label("退出播放").Tooltip("退出播放（Esc）").Cursor(ui.CursorPointer)
-	b.Children(func() { ui.Icon(c, iconClose).Size(14, 14) })
+	if a.compact {
+		b.Background(ui.RGBA(0, 0, 0, 0.45))
+		if b.Pressed() {
+			b.Background(ui.RGBA(0, 0, 0, 0.62))
+		} else if b.Hovered() {
+			b.Background(ui.RGBA(0, 0, 0, 0.56))
+		}
+		b.Children(func() { ui.Icon(c, iconClose).Size(16, 16).TextColor(ui.RGBA(255, 255, 255, 0.95)) })
+	} else {
+		b.Material(glass.Glass{Interactive: true})
+		b.Children(func() { ui.Icon(c, iconClose).Size(14, 14) })
+	}
 	if b.Clicked() {
 		a.leavePlayer()
 	}
@@ -225,10 +272,15 @@ func (a *app) exitButton(c *ui.Context) bool {
 
 // playerToolbar holds the theater's controls: the episodes drawer and
 // the way in or out of full screen. It stays out of the window controls'
-// way, at the video's top right. It reports whether the pointer is over
-// it.
+// way, at the video's top right. A phone has no window to leave full
+// screen, so its toolbar holds the episodes alone. It reports whether the
+// pointer is over it.
 func (a *app) playerToolbar(c *ui.Context, theater bool) bool {
-	bar := ui.Row(c).Absolute().Top(10).Right(14).Gap(2).Padding(3).Radius(12).
+	top, right := float32(10), float32(14)
+	if a.compact {
+		top, right = 8, a.metrics().pad
+	}
+	bar := ui.Row(c).Absolute().Top(top).Right(right).Gap(2).Padding(3).Radius(12).
 		Material(glass.Glass{})
 	bar.Children(func() {
 		if theater {
@@ -242,6 +294,9 @@ func (a *app) playerToolbar(c *ui.Context, theater bool) bool {
 					a.panelPinned = true
 				}
 			}
+		}
+		if onPhone {
+			return // the screen is the theater
 		}
 		label := "影院"
 		if theater {
@@ -295,19 +350,32 @@ func (a *app) closePanel() {
 }
 
 // theaterPanel is the episodes drawer over the video: a dimmed backdrop
-// closes it, as Escape and the close button do. It reports whether the
-// pointer is inside the panel, which keeps it open.
+// closes it, as Escape and the close button do. A phone pulls the same
+// episodes up from the bottom edge. It reports whether the pointer is
+// inside the panel, which keeps it open.
 func (a *app) theaterPanel(c *ui.Context, sp *seriesPage) bool {
+	if onPhone {
+		return a.phoneEpisodesSheet(c, sp)
+	}
 	var hovered bool
 	ui.Overlay(c, func() {
 		back := ui.Row(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).Justify(ui.End).
 			Background(ui.RGBA(0, 0, 0, 0.42))
 		back.Children(func() {
-			panel := ui.Column(c.Key("theater-panel")).Width(playerPanelWidth).FillHeight().
+			w, _ := c.Size()
+			width := float32(playerPanelWidth)
+			if a.compact {
+				width = min(float32(playerPanelWidth), w*0.86) // leave the video a hand's width of backdrop
+			}
+			headH := float32(titleBarHeight)
+			if a.compact {
+				headH = 48
+			}
+			panel := ui.Column(c.Key("theater-panel")).Width(width).FillHeight().
 				Background(playerPanelColor).Shadow(-18, 0, 48, 0, ui.RGBA(0, 0, 0, 0.5)).
 				Role(ui.RoleDialog).Label("选集")
 			panel.Children(func() {
-				ui.Row(c).Height(titleBarHeight).Shrink(0).Padding(0, 12, 0, 18).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Height(headH).Shrink(0).Padding(0, 12, 0, 18).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "选集").FontSize(17).Bold()
 					ui.Spacer(c)
 					if a.closePanelButton(c) {
@@ -400,11 +468,15 @@ func (a *app) playerPanelBody(c *ui.Context, sp *seriesPage, drawer, forceReveal
 		ui.Column(c).Grow(1).Center().Children(func() { ui.Spinner(c).FontSize(18) })
 		return
 	}
+	padX, chipW := float32(22), float32(44)
+	if a.compact {
+		padX, chipW = 16, 48
+	}
 	cur := 0
 	if a.cur != nil && a.cur.seriesID == sp.id {
 		cur = a.cur.number
 	}
-	ui.Column(c).Padding(0, 22, 16, 22).Gap(6).Children(func() {
+	ui.Column(c).Padding(0, padX, 16, padX).Gap(6).Children(func() {
 		ui.Text(c, sp.series.Title).FontSize(17).Bold().MaxLines(2)
 		ui.Textf(c, "第 %d 集 / 共 %d 集", cur, len(sp.episodes)).FontSize(12).TextColor(t.TextMuted).FontFeatures("tnum")
 		if len(sp.seasons) > 1 {
@@ -426,16 +498,33 @@ func (a *app) playerPanelBody(c *ui.Context, sp *seriesPage, drawer, forceReveal
 		ui.Row(c).Wrap().Gap(8).Children(func() {
 			for _, e := range sp.episodes[lo:hi] {
 				watched, progress := w.episodeState(e.Number)
-				chip := a.episodeChip(c, e, e.Number == cur, watched, progress, 44, t)
+				chip := a.episodeChip(c, e, e.Number == cur, watched, progress, chipW, t)
 				if reveal && e.Number == cur {
 					chip.ScrollIntoView()
 				}
 				if chip.Clicked() && e.Playable && e.Number != cur {
 					a.play(sp.id, e.Number, w.episodeStart(e.Number))
+					if a.compact {
+						// A finger chose an episode to watch, not to look
+						// at the list: put it away as the picture starts.
+						a.hidePanel(c)
+					}
 				}
 			}
 		})
 	})
-	ui.Text(c, "空格 暂停　← → 5 秒　⇧← ⇧→ 30 秒\n[ ] 倍速　↑ ↓ 换集　D 弹幕").FontSize(11).TextColor(t.TextMuted.Alpha(0.8)).
-		Padding(10, 22, 16, 22).MaxLines(2)
+	if !a.compact {
+		ui.Text(c, "空格 暂停　← → 5 秒　⇧← ⇧→ 30 秒\n[ ] 倍速　↑ ↓ 换集　D 弹幕").FontSize(11).TextColor(t.TextMuted.Alpha(0.8)).
+			Padding(10, 22, 16, 22).MaxLines(2)
+	}
+}
+
+// hidePanel puts the theater's episodes away, leaving nothing that keeps
+// them from opening again, as a tap on the toolbar does.
+func (a *app) hidePanel(c *ui.Context) {
+	a.panelOpen = false
+	a.panelReveal = false
+	a.panelPinned = false
+	// The overlay was built this frame; take it away on the next one.
+	c.Invalidate()
 }

@@ -27,26 +27,48 @@ func (a *app) seriesView(c *ui.Context, id string) {
 		default:
 			a.seriesBody(c, sp)
 		}
-		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(titleBarHeight).DragWindow()
+		if !a.compact {
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(titleBarHeight).DragWindow()
+		}
 		a.backButton(c, 18)
 	})
 }
 
 // backButton is a round button of glass that goes back. The series page
-// sits beside the sidebar, where there are no traffic lights to avoid.
+// sits beside the sidebar, where there are no traffic lights to avoid; on a
+// phone it is a plain dark circle over the hero.
 func (a *app) backButton(c *ui.Context, left float32) {
 	if !a.router.CanGoBack() {
 		return
 	}
-	b := ui.ButtonBase(c.Key("back")).Absolute().Top((titleBarHeight-30)/2).Left(left).Size(30, 30).Radius(15).
-		Center().Material(glass.Glass{Interactive: true}).Label("返回").Tooltip("返回").Cursor(ui.CursorPointer)
-	b.Children(func() { ui.Icon(c, iconBack).Size(15, 15) })
+	size, top := float32(30), float32((titleBarHeight-30)/2)
+	if a.compact {
+		left, size, top = a.metrics().pad, 34, 8
+	}
+	b := ui.ButtonBase(c.Key("back")).Absolute().Top(top).Left(left).Size(size, size).Radius(size/2).
+		Center().Label("返回").Tooltip("返回").Cursor(ui.CursorPointer)
+	if a.compact {
+		b.Background(ui.RGBA(0, 0, 0, 0.45))
+		if b.Pressed() {
+			b.Background(ui.RGBA(0, 0, 0, 0.62))
+		} else if b.Hovered() {
+			b.Background(ui.RGBA(0, 0, 0, 0.56))
+		}
+		b.Children(func() { ui.Icon(c, iconBack).Size(17, 17).TextColor(ui.RGBA(255, 255, 255, 0.95)) })
+	} else {
+		b.Material(glass.Glass{Interactive: true})
+		b.Children(func() { ui.Icon(c, iconBack).Size(15, 15) })
+	}
 	if b.Clicked() {
 		a.router.Back()
 	}
 }
 
 func (a *app) seriesBody(c *ui.Context, sp *seriesPage) {
+	if a.compact {
+		a.compactSeriesBody(c, sp)
+		return
+	}
 	t := c.Theme()
 	s := sp.series
 	bmp, alpha := a.covers.get(c, s.CoverURL)
@@ -91,6 +113,60 @@ func (a *app) seriesBody(c *ui.Context, sp *seriesPage) {
 						a.favButton(c, sp)
 						a.wantButton(c, sp)
 					})
+				})
+			})
+		})
+		a.episodeGrid(c, sp)
+	})
+}
+
+// compactSeriesBody is the series page on a phone: the same hero, with the
+// poster smaller and the details under it, since a finger has no room
+// beside a poster and no hover to reveal anything.
+func (a *app) compactSeriesBody(c *ui.Context, sp *seriesPage) {
+	t := c.Theme()
+	s := sp.series
+	bmp, alpha := a.covers.get(c, s.CoverURL)
+	ui.Scroll(c).Fill().Children(func() {
+		ui.Box(c).Shrink(0).Children(func() {
+			// The backdrop: the cover blurred wide, under the page's
+			// color, which the text reads on. It fills the box, which the
+			// content below makes as tall as it needs.
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Clip().Children(func() {
+				if bmp != nil {
+					ui.Image(c, bmp).Absolute().Top(-60).Left(-60).Right(-60).Bottom(-60).Fit(ui.Cover).
+						Blur(48).Opacity(alpha).Cache()
+				}
+			})
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).LinearGradient(ui.LinearGradient{
+				From: t.Background.Alpha(0.45), To: t.Background, Angle: 180, Start: 0.2, End: 0.9, Oklab: true,
+			})
+			ui.Column(c).Padding(56, 16, 18, 16).Gap(12).ZIndex(1).Children(func() {
+				ui.Row(c).Gap(14).AlignItems(ui.End).Children(func() {
+					ui.Box(c).Size(104, 139).Shrink(0).Radius(10).Clip().Background(placeholder(t)).
+						Shadow(0, 12, 28, 0, ui.RGBA(0, 0, 0, 0.32)).Children(func() {
+						if bmp != nil {
+							ui.Image(c, bmp).Fill().Fit(ui.Cover).Opacity(alpha)
+						}
+					})
+					ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
+						ui.Text(c, s.Title).FontSize(20).Bold().MaxLines(2).LetterSpacing(-0.2)
+						ui.Text(c, metaLine(s)).FontSize(11.5).TextColor(t.TextMuted).MaxLines(2)
+					})
+				})
+				if s.Description != "" {
+					ui.Text(c, s.Description).FontSize(12.5).LineHeight(1.55).MaxLines(3).MaxWidth(640).
+						TextColor(t.Text.Alpha(0.84))
+				}
+				ui.Row(c).Wrap().Gap(8).Margin(2, 0, 0, 0).Children(func() {
+					if len(sp.episodes) > 0 {
+						id, n, start, label := a.resumePoint(sp)
+						if a.playButton(c, label) {
+							a.play(id, n, start)
+						}
+					}
+					a.favButton(c, sp)
+					a.wantButton(c, sp)
 				})
 			})
 		})
@@ -236,11 +312,15 @@ func (a *app) episodeGrid(c *ui.Context, sp *seriesPage) {
 	if w, ok := a.hist.get(sp.id); ok {
 		cur = w.Episode
 	}
-	ui.Column(c).Padding(6, 44, 44, 44).Gap(16).Children(func() {
+	padX, chipW, titleSize := float32(44), float32(56), float32(19)
+	if a.compact {
+		padX, chipW, titleSize = 16, 48, 17
+	}
+	ui.Column(c).Padding(6, padX, 44, padX).Gap(16).Children(func() {
 		// The other seasons, in the same place: Back still leaves the series.
 		a.seasonPicker(c, sp, func(se model.Season) { a.router.Replace("/series/" + se.SeriesID) })
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "选集").FontSize(19).Bold()
+			ui.Text(c, "选集").FontSize(titleSize).Bold()
 			ui.Textf(c, "共 %d 集", len(eps)).FontSize(13).TextColor(t.TextMuted)
 			ui.Spacer(c)
 			a.partPicker(c, sp, false)
@@ -254,7 +334,7 @@ func (a *app) episodeGrid(c *ui.Context, sp *seriesPage) {
 		ui.Row(c).Wrap().Gap(8).Children(func() {
 			for _, e := range eps[lo:hi] {
 				watched, progress := w.episodeState(e.Number)
-				if a.episodeChip(c, e, e.Number == cur, watched, progress, 56, t).Clicked() && e.Playable {
+				if a.episodeChip(c, e, e.Number == cur, watched, progress, chipW, t).Clicked() && e.Playable {
 					a.play(sp.id, e.Number, w.episodeStart(e.Number))
 				}
 			}
@@ -312,7 +392,9 @@ func (a *app) partPicker(c *ui.Context, sp *seriesPage, inline bool) {
 	for lo := 0; lo < n; lo += episodesPerPart {
 		labels = append(labels, fmt.Sprintf("%d–%d", lo+1, min(n, lo+episodesPerPart)))
 	}
-	if len(labels) <= 6 {
+	// Three parts still read as one row of tabs; more turn into a select,
+	// whose list holds any number of them in a phone's width.
+	if len(labels) <= 3 {
 		ui.Segmented(c.Key("parts"), &sp.part, labels...)
 		return
 	}
@@ -346,7 +428,11 @@ func (a *app) partRange(sp *seriesPage) (int, int) {
 // one the viewer is on. Watched episodes carry a check; a partly watched
 // one a line at the bottom.
 func (a *app) episodeChip(c *ui.Context, e model.Episode, current, watched bool, progress float64, width float32, t *ui.Theme) ui.Element {
-	b := ui.ButtonBase(c.Key(e.ID)).Size(width, 38).Radius(9).Center().Label(fmt.Sprintf("第 %d 集", e.Number))
+	height := float32(38)
+	if a.compact {
+		height = 44 // a finger's target
+	}
+	b := ui.ButtonBase(c.Key(e.ID)).Size(width, height).Radius(9).Center().Label(fmt.Sprintf("第 %d 集", e.Number))
 	switch {
 	case current:
 		b.Background(t.Accent).TextColor(t.AccentText)

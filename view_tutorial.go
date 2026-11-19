@@ -36,7 +36,7 @@ func (a *app) finishTutorial() {
 
 // tutorialNext goes to the next page, or closes the last one.
 func (a *app) tutorialNext() {
-	if a.tutorialStep < len(tutorialSteps)-1 {
+	if a.tutorialStep < len(tutorialSteps())-1 {
 		a.tutorialStep++
 		return
 	}
@@ -49,13 +49,13 @@ func (a *app) finishPlayerTutorial() {
 	a.playerTutorialOn = false
 	a.playerTutorialStep = 0
 	a.playerTutorialHeld = false
-	a.evalJS("kx.setHold(false)")
+	a.holdPlayback(false)
 	writeMarker(a.dataDir, "player-tutorial")
 }
 
 // playerTutorialNext goes to the next page, or closes the last one.
 func (a *app) playerTutorialNext() {
-	if a.playerTutorialStep < len(playerTutorialSteps)-1 {
+	if a.playerTutorialStep < len(playerTutorialSteps())-1 {
 		a.playerTutorialStep++
 		return
 	}
@@ -68,8 +68,16 @@ type tutorialStep struct {
 }
 
 // tutorialSteps is the first launch's tour: the few things the rest of the
-// app does not make obvious by itself.
-var tutorialSteps = []tutorialStep{
+// app does not make obvious by itself. A phone has no pointer, window or
+// Esc, so its tour says what a finger does instead.
+func tutorialSteps() []tutorialStep {
+	if onPhone {
+		return phoneTutorialSteps
+	}
+	return desktopTutorialSteps
+}
+
+var desktopTutorialSteps = []tutorialStep{
 	{
 		title: "找剧",
 		body:  "推荐、排行榜和新剧都在侧栏，⌘F 随时搜索。",
@@ -88,9 +96,35 @@ var tutorialSteps = []tutorialStep{
 	},
 }
 
+var phoneTutorialSteps = []tutorialStep{
+	{
+		title: "找剧",
+		body:  "推荐、排行榜和新剧都在下面的标签栏；点「搜索」，输入剧名就能找到。",
+	},
+	{
+		title: "收藏和续播",
+		body:  "剧集页点「收藏」；看过的剧出现在「我的」里的最近播放，点一下接着看。",
+	},
+	{
+		title: "选集和返回",
+		body:  "播放时点右上角的「选集」，剧集从右侧滑出，选一集就自动收起；点左上角的 ✕ 回到剧集页。",
+	},
+	{
+		title: "轻点出播放栏",
+		body:  "轻点画面显示或隐藏底部播放栏，拖动进度条跳到任意位置；把手机横过来，画面更大。",
+	},
+}
+
 // playerTutorialSteps is the player's own first visit: the controls that
 // are not obvious until one has used them.
-var playerTutorialSteps = []tutorialStep{
+func playerTutorialSteps() []tutorialStep {
+	if onPhone {
+		return phonePlayerTutorialSteps
+	}
+	return desktopPlayerTutorialSteps
+}
+
+var desktopPlayerTutorialSteps = []tutorialStep{
 	{
 		title: "双击进出影院",
 		body:  "播放时双击视频，进入或退出全屏影院；也可以点右上角的「影院 / 退出影院」。",
@@ -109,9 +143,28 @@ var playerTutorialSteps = []tutorialStep{
 	},
 }
 
+var phonePlayerTutorialSteps = []tutorialStep{
+	{
+		title: "选集",
+		body:  "点右上角的「选集」，剧集从右侧滑出；选一集就自动收起，回到画面。",
+	},
+	{
+		title: "轻点画面",
+		body:  "轻点画面显示或隐藏底部播放栏；播放时它过几秒会自己隐藏，让画面干净。",
+	},
+	{
+		title: "底部播放栏",
+		body:  "播放/暂停、快退快进、上一集/下一集、进度、倍速和弹幕都在底部；拖动进度条可以跳到任意位置。",
+	},
+	{
+		title: "退出播放",
+		body:  "点左上角的 ✕ 回到剧集页；Android 的返回键会先收起选集，再离开播放。",
+	},
+}
+
 // tutorial shows the app's first launch tour.
 func (a *app) tutorial(c *ui.Context) {
-	a.tour(c, "新手教程", tutorialSteps, a.tutorialStep, "开始使用",
+	a.tour(c, "新手教程", tutorialSteps(), a.tutorialStep, "开始使用",
 		func() {
 			if a.tutorialStep > 0 {
 				a.tutorialStep--
@@ -123,7 +176,7 @@ func (a *app) tutorial(c *ui.Context) {
 // playerTutorial shows the player's first visit tour over the paused
 // video.
 func (a *app) playerTutorial(c *ui.Context) {
-	a.tour(c, "播放器新手指南", playerTutorialSteps, a.playerTutorialStep, "开始观看",
+	a.tour(c, "播放器新手指南", playerTutorialSteps(), a.playerTutorialStep, "开始观看",
 		func() {
 			if a.playerTutorialStep > 0 {
 				a.playerTutorialStep--
@@ -141,11 +194,15 @@ func (a *app) tour(c *ui.Context, title string, steps []tutorialStep, step int, 
 	t := c.Theme()
 	current := min(max(step, 0), len(steps)-1)
 	s := steps[current]
+	// A phone is narrower than the card, so the card is as wide as the
+	// window allows and the body wraps.
+	w, _ := c.Size()
+	cardWidth := max(240, min(480, w-32))
 	ui.Overlay(c, func() {
 		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
 			Background(ui.RGBA(0, 0, 0, 0.58)).Center().Modal()
 		back.Children(func() {
-			card := ui.Column(c.Key("tutorial")).Width(480).Padding(26, 30, 20, 30).
+			card := ui.Column(c.Key("tutorial")).Width(cardWidth).Padding(26, 30, 20, 30).
 				Background(t.Surface).Radius(16).
 				Shadow(0, 20, 52, 8, ui.RGBA(0, 0, 0, 0.45)).
 				Role(ui.RoleDialog).Label(title)

@@ -251,7 +251,12 @@ func (a *app) setDanmaku(on bool) {
 	} else {
 		writeMarker(a.dataDir, danmakuOffFile)
 	}
-	a.evalJS(fmt.Sprintf("kx.setDanmaku(%t)", on))
+	if a.dm != nil {
+		a.dm.setOn(on)
+	}
+	if a.player == nil {
+		a.evalJS(fmt.Sprintf("kx.setDanmaku(%t)", on))
+	}
 	if on {
 		a.feedDanmaku()
 	}
@@ -311,17 +316,21 @@ func (a *app) feedDanmaku() {
 	}()
 }
 
-// flushDanmaku gives the page the lines of the episode it plays that it
-// does not have yet.
+// flushDanmaku gives the player the lines of the episode it plays that it
+// does not have yet: the native player's Go layer, or the page.
 func (a *app) flushDanmaku() {
 	p := a.cur
-	if p == nil || !p.onPage {
+	if p == nil || !p.loaded {
 		return
 	}
 	tr := a.tracks[p.epID]
 	if tr == nil || p.dmSent >= len(tr.lines) {
 		return
 	}
-	a.evalJS(danmakuJS(p.epID, tr.lines[p.dmSent:]))
+	if a.player != nil {
+		a.dm.feed(tr.lines[p.dmSent:])
+	} else {
+		a.evalJS(danmakuJS(p.epID, tr.lines[p.dmSent:]))
+	}
 	p.dmSent = len(tr.lines)
 }

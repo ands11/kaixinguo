@@ -18,10 +18,6 @@ const (
 	cellBorder = 2   // the clear border GridView keeps around each cell
 	cellPadX   = 12  // room on each side of a poster in its cell
 	posterMinW = 176 // the narrowest a poster gets
-	cellMinW   = posterMinW + 2*(cellBorder+cellPadX)
-	// posterInset is where the first column's posters start, which the
-	// page's title and controls line up with.
-	posterInset = gridPadX + cellBorder + cellPadX
 
 	// The room in a card above its poster, between the poster and the
 	// lines about it, and under those lines, which keeps the rows apart.
@@ -30,38 +26,100 @@ const (
 	cardPadBottom = 18
 	// coverMute is how much of a poster's color gives way to gray until
 	// the pointer comes: the covers are loud, and a wall of them more so.
+	// A finger has no pointer to come, so phones show them in color.
 	coverMute = 0.4
+
+	// A phone's screen is narrow, and its fingers are not a pointer: under
+	// compactWidth the app shows tabs instead of the sidebar, with a
+	// tighter grid that fits three posters across.
+	compactWidth     = 640
+	compactHeaderH   = 48 // a page's title row
+	compactRightH    = 40 // the controls a page puts under its title
+	compactPadX      = 12
+	compactCellPadX  = 6
+	compactPosterMin = 96
 )
+
+// cardMetrics is how the grid of a page is laid out: roomier on a computer,
+// where the sidebar takes a side, and tighter on a phone.
+type cardMetrics struct {
+	pad        float32 // the page's margin, outside the cells' own
+	posterMin  float32 // the narrowest a poster gets
+	cellPad    float32 // room on each side of a poster in its cell
+	padTop     float32 // the room in a card above its poster
+	titleGap   float32 // between the poster and the lines about it
+	padBottom  float32 // under those lines, which keeps the rows apart
+	lines      float32 // the height of a card's title and the line under it
+	titleSize  float32
+	subSize    float32
+	bodyHeight float32 // the height of a page's title row
+}
+
+func (m cardMetrics) cellMin() float32 { return m.posterMin + 2*(cellBorder+m.cellPad) }
+func (m cardMetrics) inset() float32   { return m.pad + cellBorder + m.cellPad }
+func (m cardMetrics) chrome() float32 {
+	return 2*cellBorder + m.padTop + m.titleGap + m.lines + m.padBottom
+}
+
+// metrics is the layout the pages are built with now.
+func (a *app) metrics() cardMetrics {
+	if a.compact {
+		return cardMetrics{
+			pad: compactPadX, posterMin: compactPosterMin, cellPad: compactCellPadX,
+			padTop: 4, titleGap: 10, padBottom: 14, lines: 36,
+			titleSize: 13, subSize: 11.5, bodyHeight: compactHeaderH,
+		}
+	}
+	return cardMetrics{
+		pad: gridPadX, posterMin: posterMinW, cellPad: cellPadX,
+		padTop: cardPadTop, titleGap: cardTitleGap, padBottom: cardPadBottom, lines: cardLines,
+		titleSize: 14, subSize: 12, bodyHeight: titleBarHeight,
+	}
+}
 
 // gridMetrics is how a grid of cards fits the page: how many columns, as
 // GridView counts them, and how high each row, so that every poster is 3:4.
 func (a *app) gridMetrics(c *ui.Context) (cols int, rowH float32) {
 	w, _ := c.Size()
-	inner := w - sidebarWidth*a.sideShown - 1 - 2*gridPadX
+	m := a.metrics()
+	inner := w - 2*m.pad
+	if !a.compact {
+		inner -= sidebarWidth*a.sideShown + 1
+	}
 	gap := c.Theme().Space(2)
-	cols = max(1, int((inner+gap)/(cellMinW+gap)))
+	cols = max(1, int((inner+gap)/(m.cellMin()+gap)))
 	cellW := (inner - float32(cols-1)*gap) / float32(cols)
-	posterW := cellW - (cellMinW - posterMinW)
-	return cols, posterW*4/3 + cardChrome
+	posterW := cellW - (m.cellMin() - m.posterMin)
+	return cols, posterW*4/3 + m.chrome()
 }
-
-// cardChrome is the height of a card's cell besides its poster: the
-// border, the room around the poster and the two lines under it.
-const cardChrome = 2*cellBorder + cardPadTop + cardTitleGap + cardLines + cardPadBottom
 
 // cardLines is the height of a card's title and the line under it.
 const cardLines = 41
 
 func (a *app) view(c *ui.Context) {
+	w, _ := c.Size()
+	a.compact = onPhone || w < compactWidth
 	t := c.Theme()
-	vibrant := c.Vibrancy()
+	vibrant := c.Vibrancy() && !a.compact
 	if vibrant {
 		c.Root().Background(ui.Transparent)
 	}
 	path := a.router.Path()
 	onPlayer := strings.HasPrefix(path, "/play/")
+	// The framework keeps the system bars' insets as the root's padding, and
+	// fills that band with the root's background rather than the page's. The
+	// player takes the band back as content — the picture runs into it on
+	// every edge but the bottom, which keeps the gesture bar — and what shows
+	// around it is the player's own ground, never a strip of the window.
+	// The bars the layouts draw keep clear of the cutout on their own, through
+	// SafeArea.
+	if onPlayer && a.compact {
+		c.Root().Background(playerBg)
+		top, right, _, left := c.SafeArea()
+		c.Root().Padding(-top, -right, 0, -left)
+	}
 	if a.onPlayer && !onPlayer {
-		a.evalJS("kx.pause()") // left the player
+		a.pausePlayback() // left the player
 		a.panelOpen = false
 		a.panelSuppressed = false
 		a.panelJustClosed = false
@@ -81,52 +139,59 @@ func (a *app) view(c *ui.Context) {
 		a.playerAppearance(true)
 	}
 	a.onPlayer = onPlayer
+	// The bars show on every page but the full screen, where the picture
+	// fills the screen and the player's own layout draws the row.
+	a.playerBars(onPlayer)
 	switch path {
-	case "/discover", "/rank", "/new", "/search", "/favorites":
+	case "/discover", "/rank", "/new", "/search", "/favorites", "/mine":
 		a.section = path
 	}
 
-	row := ui.Row(c).Fill().AlignItems(ui.Stretch)
-	a.sideShown = row.Animate("sidebar", b2f(!onPlayer), 280*time.Millisecond)
-	row.Children(func() {
-		// The sidebar slides away while the player shows.
-		w := sidebarWidth * a.sideShown
-		ui.Row(c).Width(w).Shrink(0).AlignItems(ui.Stretch).Clip().Children(func() {
-			side := ui.Column(c).Width(sidebarWidth).Shrink(0).Margin(0, 0, 0, w-sidebarWidth)
-			if !vibrant {
-				side.Background(t.Surface)
+	if a.compact {
+		a.compactView(c)
+	} else {
+		row := ui.Row(c).Fill().AlignItems(ui.Stretch)
+		a.sideShown = row.Animate("sidebar", b2f(!onPlayer), 280*time.Millisecond)
+		row.Children(func() {
+			// The sidebar slides away while the player shows.
+			w := sidebarWidth * a.sideShown
+			ui.Row(c).Width(w).Shrink(0).AlignItems(ui.Stretch).Clip().Children(func() {
+				side := ui.Column(c).Width(sidebarWidth).Shrink(0).Margin(0, 0, 0, w-sidebarWidth)
+				if !vibrant {
+					side.Background(t.Surface)
+				}
+				side.Children(func() { a.sidebar(c, vibrant) })
+			})
+			if w > 0.5 {
+				ui.Box(c).Width(1).Background(hairline(t))
 			}
-			side.Children(func() { a.sidebar(c, vibrant) })
+			a.router.View(c, func(r *ui.Route) {
+				switch {
+				case r.Match("/discover"):
+					r.Title("推荐")
+					a.gridPage(c, "推荐", a.home, nil, nil, 0, "暂时没有推荐")
+				case r.Match("/rank"):
+					r.Title("排行榜")
+					a.rankPage(c)
+				case r.Match("/new"):
+					r.Title("新剧上线")
+					a.newPage(c)
+				case r.Match("/search"):
+					r.Title("搜索")
+					a.searchPage(c, r.Query("q"))
+				case r.Match("/favorites"):
+					r.Title("收藏")
+					a.favoritesPage(c)
+				case r.Match("/series/{id}"):
+					r.Title("详情")
+					a.seriesView(c, r.Param("id"))
+				case r.Match("/play/{id}"):
+					r.Title("播放")
+					a.playerView(c, r.Param("id"))
+				}
+			}).Grow(1).MinWidth(0).Background(t.Background)
 		})
-		if w > 0.5 {
-			ui.Box(c).Width(1).Background(hairline(t))
-		}
-		a.router.View(c, func(r *ui.Route) {
-			switch {
-			case r.Match("/discover"):
-				r.Title("推荐")
-				a.gridPage(c, "推荐", a.home, nil, nil, 0, "暂时没有推荐")
-			case r.Match("/rank"):
-				r.Title("排行榜")
-				a.rankPage(c)
-			case r.Match("/new"):
-				r.Title("新剧上线")
-				a.newPage(c)
-			case r.Match("/search"):
-				r.Title("搜索")
-				a.searchPage(c, r.Query("q"))
-			case r.Match("/favorites"):
-				r.Title("收藏")
-				a.favoritesPage(c)
-			case r.Match("/series/{id}"):
-				r.Title("详情")
-				a.seriesView(c, r.Param("id"))
-			case r.Match("/play/{id}"):
-				r.Title("播放")
-				a.playerView(c, r.Param("id"))
-			}
-		}).Grow(1).MinWidth(0).Background(t.Background)
-	})
+	}
 
 	if !a.tutorialOn && !(onPlayer && a.playerTutorialOn) {
 		c.OnShortcut(ui.Cmd, ui.KeyF, func() {
@@ -145,6 +210,96 @@ func (a *app) view(c *ui.Context) {
 	if a.tutorialOn {
 		a.tutorial(c)
 	}
+}
+
+// compactView is the app on a phone's screen: a page, with the sections as
+// tabs under it. A series and the player open over the page, without tabs.
+func (a *app) compactView(c *ui.Context) {
+	t := c.Theme()
+	path := a.router.Path()
+	full := strings.HasPrefix(path, "/play/") || strings.HasPrefix(path, "/series/")
+	// The system's bars show everywhere but the full screen, and the
+	// framework holds their insets as the root's padding, so each page
+	// already keeps clear of the cutout: the player takes the padding back
+	// in view, where its picture runs to the edges.
+	ui.Column(c).Fill().Children(func() {
+		a.router.View(c, func(r *ui.Route) {
+			switch {
+			case r.Match("/discover"):
+				r.Title("推荐")
+				a.gridPage(c, "推荐", a.home, nil, nil, 0, "暂时没有推荐")
+			case r.Match("/rank"):
+				r.Title("排行榜")
+				a.rankPage(c)
+			case r.Match("/new"):
+				r.Title("新剧上线")
+				a.newPage(c)
+			case r.Match("/search"):
+				r.Title("搜索")
+				a.searchPage(c, r.Query("q"))
+			case r.Match("/favorites"):
+				r.Title("收藏")
+				a.favoritesPage(c)
+			case r.Match("/mine"):
+				r.Title("我的")
+				a.minePage(c)
+			case r.Match("/series/{id}"):
+				r.Title("详情")
+				a.seriesView(c, r.Param("id"))
+			case r.Match("/play/{id}"):
+				r.Title("播放")
+				a.playerView(c, r.Param("id"))
+			}
+		}).Grow(1).Basis(0).FillWidth().Background(t.Background)
+		if !full {
+			a.tabsView(c)
+		}
+	})
+}
+
+// tabs are the sections of the compact view, in order.
+var tabs = []struct {
+	label string
+	icon  *ui.SVG
+	path  string
+}{
+	{"推荐", iconHome, "/discover"},
+	{"榜单", iconChart, "/rank"},
+	{"新剧", iconCalendar, "/new"},
+	{"搜索", iconSearch, "/search"},
+	{"我的", iconPerson, "/mine"},
+}
+
+// tabsView is the bar of tabs at the bottom of the compact view. Choosing
+// one replaces the page shown, so that going back does not walk the tabs.
+func (a *app) tabsView(c *ui.Context) {
+	t := c.Theme()
+	ui.Row(c).FillWidth().Shrink(0).Height(58).Padding(4, 4).Gap(2).
+		Background(t.Surface).Children(func() {
+		for _, tab := range tabs {
+			on := a.section == tab.path
+			col := t.TextMuted
+			if on {
+				col = t.Accent
+			}
+			b := ui.ButtonBase(c.Key("tab:"+tab.path)).Grow(1).Basis(0).MinWidth(0).Height(50).
+				Radius(10).Center().Label(tab.label).Role(ui.RoleTab).AccessSelected(on)
+			if on {
+				b.Background(t.Accent.Alpha(0.1))
+			}
+			b.Children(func() {
+				ui.Column(c).Gap(3).Center().Children(func() {
+					ui.Icon(c, tab.icon).Size(20, 20).TextColor(col)
+					ui.Text(c, tab.label).FontSize(10.5).FontWeight(600).TextColor(col).SingleLine()
+				})
+			})
+			if b.Clicked() && !on {
+				a.router.Replace(tab.path)
+				a.section = tab.path
+			}
+		}
+	})
+	ui.Box(c).FillWidth().Height(1).Shrink(0).Background(hairline(t))
 }
 
 func (a *app) sidebar(c *ui.Context, vibrant bool) {
@@ -251,11 +406,27 @@ func (a *app) sectionItem(c *ui.Context, selected, id string, icon *ui.SVG, labe
 }
 
 // header is a page's title, level with the window controls, and what goes
-// beside it.
+// beside it. On a phone there are no window controls to make room for, and
+// the system's bars are already outside the page, so it is closer to the
+// edges and opaque, since the grid scrolls under it.
 func (a *app) header(c *ui.Context, title string, right func()) {
-	ui.Row(c).Height(titleBarHeight).Shrink(0).AlignItems(ui.Center).Gap(12).
-		Padding(0, posterInset).DragWindow().Children(func() {
-		ui.Text(c, title).FontSize(22).Bold().SingleLine()
+	m := a.metrics()
+	row := ui.Row(c).Height(m.bodyHeight).Shrink(0).AlignItems(ui.Center).Gap(10).
+		Padding(0, m.inset())
+	if a.compact {
+		row.Background(c.Theme().Background)
+	} else {
+		row.DragWindow()
+	}
+	row.Children(func() {
+		if a.compact && a.router.CanGoBack() && !a.headerOwnsBack() {
+			a.headerBack(c)
+		}
+		size := float32(22)
+		if a.compact {
+			size = 20
+		}
+		ui.Text(c, title).FontSize(size).Bold().SingleLine()
 		ui.Spacer(c)
 		if right != nil {
 			right()
@@ -263,17 +434,45 @@ func (a *app) header(c *ui.Context, title string, right func()) {
 	})
 }
 
+// headerBack is the compact header's way out of a page reached from a tab,
+// as search results are.
+func (a *app) headerBack(c *ui.Context) {
+	t := c.Theme()
+	b := ui.ButtonBase(c.Key("header-back")).Size(32, 32).Radius(16).Shrink(0).
+		Center().Label("返回").Tooltip("返回")
+	if b.Pressed() || b.Hovered() {
+		b.Background(t.Text.Alpha(0.1))
+	}
+	b.Children(func() { ui.Icon(c, iconBack).Size(16, 16) })
+	if b.Clicked() {
+		a.router.Back()
+	}
+}
+
+// headerOwnsBack reports whether the page draws its own way back, as the
+// series and the player do, so the header need not add one.
+func (a *app) headerOwnsBack() bool {
+	path := a.router.Path()
+	return strings.HasPrefix(path, "/series/") || strings.HasPrefix(path, "/play/")
+}
+
 // gridPage is a page of posters under a header that the grid scrolls
 // under, with a row of controls under the title when it has them.
 func (a *app) gridPage(c *ui.Context, title string, f *feed, right, controls func(), controlsH float32, empty string) {
-	top := float32(titleBarHeight) + controlsH
+	m := a.metrics()
+	top := m.bodyHeight + controlsH
 	ui.Box(c).Fill().Children(func() {
 		a.cardGrid(c, f, top+12, empty)
-		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(top + 12).PassThrough().Material(glass.ScrollEdge{})
+		edge := ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(top + 12).PassThrough()
+		if a.compact {
+			edge.Background(c.Theme().Background)
+		} else {
+			edge.Material(glass.ScrollEdge{})
+		}
 		ui.Column(c).Absolute().Top(0).Left(0).Right(0).Children(func() {
 			a.header(c, title, right)
 			if controls != nil {
-				ui.Row(c).Height(controlsH).AlignItems(ui.Start).Padding(0, posterInset).Children(controls)
+				ui.Row(c).Height(controlsH).AlignItems(ui.Start).Padding(0, m.inset()).Children(controls)
 			}
 		})
 	})
@@ -284,14 +483,15 @@ func (a *app) cardGrid(c *ui.Context, f *feed, top float32, empty string) {
 		a.feedState(c, f, top, empty)
 		return
 	}
+	m := a.metrics()
 	cols, rowH := a.gridMetrics(c)
 	n := len(f.cards)
-	ui.GridView(c, &f.grid, n, cellMinW, rowH, func(i int) {
+	ui.GridView(c, &f.grid, n, m.cellMin(), rowH, func(i int) {
 		a.card(c, f.cards[i], f.showWatch)
 		if i >= n-cols*2 && f.more {
 			a.loadMore(f)
 		}
-	}).Fill().Padding(top, gridPadX, 32, gridPadX).ScrollbarInsets(top, 0, 0, 0)
+	}).Fill().Padding(top, m.pad, 32, m.pad).ScrollbarInsets(top, 0, 0, 0)
 }
 
 // feedState is what a feed with no series yet shows.
@@ -328,6 +528,7 @@ func (a *app) feedState(c *ui.Context, f *feed, top float32, empty string) {
 // card is a series in a grid: its poster, title and a line about it.
 func (a *app) card(c *ui.Context, k card, showWatch bool) {
 	t := c.Theme()
+	m := a.metrics()
 	b := ui.ButtonBase(c.Key(k.ID)).Fill().Label(k.Title).Cursor(ui.CursorPointer)
 	hover := b.Hovered()
 	saved := a.favs.has(k.ID)
@@ -337,24 +538,24 @@ func (a *app) card(c *ui.Context, k card, showWatch bool) {
 		}
 	})
 	b.Children(func() {
-		ui.Column(c).Fill().Padding(cardPadTop, cellPadX, cardPadBottom, cellPadX).Gap(cardTitleGap).Children(func() {
+		ui.Column(c).Fill().Padding(m.padTop, m.cellPad, m.padBottom, m.cellPad).Gap(m.titleGap).Children(func() {
 			poster := a.poster(c, k.Cover, 12, hover).Grow(1).MinHeight(0)
 			if showWatch {
 				if label, fraction, bar, ok := a.favoriteProgress(k); ok {
 					poster.Children(func() { a.watchOverlay(c, label, fraction, bar) })
 				}
 			}
-			ui.Column(c).Height(cardLines).Shrink(0).Gap(4).Padding(0, 2).Children(func() {
+			ui.Column(c).Height(m.lines).Shrink(0).Gap(4).Padding(0, 2).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					if k.Rank > 0 {
-						ui.Textf(c, "%d", k.Rank).FontSize(14).FontWeight(600).TextColor(t.TextMuted).FontFeatures("tnum")
+						ui.Textf(c, "%d", k.Rank).FontSize(m.titleSize).FontWeight(600).TextColor(t.TextMuted).FontFeatures("tnum")
 					}
-					ui.Text(c, k.Title).FontSize(14).FontWeight(500).SingleLine().Grow(1).MinWidth(0)
+					ui.Text(c, k.Title).FontSize(m.titleSize).FontWeight(500).SingleLine().Grow(1).MinWidth(0)
 					if saved {
 						ui.Icon(c, iconStarOn).Size(11, 11).Shrink(0).TextColor(t.TextMuted.Alpha(0.7)).Tooltip("已收藏")
 					}
 				})
-				ui.Text(c, k.Sub).FontSize(12).TextColor(t.TextMuted.Alpha(0.85)).SingleLine().FontFeatures("tnum")
+				ui.Text(c, k.Sub).FontSize(m.subSize).TextColor(t.TextMuted.Alpha(0.85)).SingleLine().FontFeatures("tnum")
 			})
 		})
 	})
@@ -467,8 +668,14 @@ func (a *app) poster(c *ui.Context, cover string, radius float32, hover bool) ui
 		if bmp, alpha := a.covers.get(c, cover); bmp != nil {
 			ui.Image(c, bmp).Fill().Fit(ui.Cover).Opacity(alpha)
 			// A gray copy over the cover, partly see-through, takes some
-			// of its color out: MyGo draws images in color or in gray.
-			if mute := coverMute * (1 - lift); mute > 0.01 {
+			// of its color out: MyGo draws images in color or in gray. A
+			// phone's finger never comes to unmute them, so they stay in
+			// color there.
+			mute := coverMute * (1 - lift)
+			if onPhone {
+				mute = 0
+			}
+			if mute > 0.01 {
 				ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).
 					Grayscale().Opacity(alpha * mute)
 			}
@@ -652,14 +859,20 @@ func (a *app) searchPage(c *ui.Context, q string) {
 	a.gridPage(c, "“"+q+"”", f, nil, nil, 0, "没有找到“"+q+"”相关的短剧，换个词试试")
 }
 
-// hotPage shows what people search for, before a search.
+// hotPage shows what people search for, before a search. On a phone it
+// starts with the field to type in, since the sidebar's field is gone.
 func (a *app) hotPage(c *ui.Context) {
 	t := c.Theme()
+	m := a.metrics()
 	if a.hot == nil && !a.hotLoading && a.hotErr == nil {
 		a.loadHot()
 	}
+	searchH := float32(0)
+	if a.compact {
+		searchH = 52
+	}
 	ui.Box(c).Fill().Children(func() {
-		top := float32(titleBarHeight)
+		top := m.bodyHeight + searchH
 		switch {
 		case a.hot == nil && a.hotErr != nil:
 			ui.Column(c).Fill().Center().Gap(10).Children(func() {
@@ -673,12 +886,12 @@ func (a *app) hotPage(c *ui.Context) {
 			// The boards' cards are as large as the other pages' grids.
 			cols, rowH := a.gridMetrics(c)
 			gap := t.Space(2)
-			ui.Scroll(c).Fill().Padding(top, gridPadX, 32, gridPadX).ScrollbarInsets(top, 0, 0, 0).Children(func() {
+			ui.Scroll(c).Fill().Padding(top, m.pad, 32, m.pad).ScrollbarInsets(top, 0, 0, 0).Children(func() {
 				for _, b := range a.hot.Boards {
 					if len(b.Items) == 0 {
 						continue
 					}
-					ui.Text(c, b.Name).FontSize(17).Bold().Margin(20, cellBorder+cellPadX, 6, cellBorder+cellPadX)
+					ui.Text(c, b.Name).FontSize(17).Bold().Margin(20, cellBorder+m.cellPad, 6, cellBorder+m.cellPad)
 					for r := 0; r < len(b.Items); r += cols {
 						ui.Row(c).Gap(gap).PaddingY(gap / 2).Children(func() {
 							for i := r; i < r+cols; i++ {
@@ -701,9 +914,31 @@ func (a *app) hotPage(c *ui.Context) {
 				}
 			})
 		}
-		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(top + 12).PassThrough().Material(glass.ScrollEdge{})
-		ui.Column(c).Absolute().Top(0).Left(0).Right(0).Children(func() { a.header(c, "热搜", nil) })
+		edge := ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(top + 12).PassThrough()
+		if a.compact {
+			edge.Background(t.Background)
+		} else {
+			edge.Material(glass.ScrollEdge{})
+		}
+		ui.Column(c).Absolute().Top(0).Left(0).Right(0).Children(func() {
+			a.header(c, "热搜", nil)
+			if a.compact {
+				ui.Row(c).Height(searchH).Padding(0, m.inset()).AlignItems(ui.Center).Children(func() {
+					a.searchBox(c)
+				})
+			}
+		})
 	})
+}
+
+// searchBox is the field to search with, for the pages a phone shows
+// instead of the sidebar that holds it on a computer.
+func (a *app) searchBox(c *ui.Context) {
+	field := ui.SearchField(c.Key("search"), &a.query).Placeholder("搜索短剧").Label("搜索短剧").
+		Bind(&a.searchField).Grow(1)
+	if field.Submitted() {
+		a.router.Push("/search?q=" + url.QueryEscape(strings.TrimSpace(a.query)))
+	}
 }
 
 func (a *app) loadHot() {
@@ -730,6 +965,113 @@ func (a *app) favoritesPage(c *ui.Context) {
 	}
 	a.favFeed.showWatch = true
 	a.gridPage(c, "收藏", a.favFeed, nil, nil, 0, "还没有收藏。在剧集页点「收藏」，想看的就存下来。")
+}
+
+// minePage is the compact view's 我的: the series watched lately, which the
+// sidebar lists on a computer, and the way to the saved ones.
+func (a *app) minePage(c *ui.Context) {
+	t := c.Theme()
+	m := a.metrics()
+	ui.Box(c).Fill().Children(func() {
+		ui.Scroll(c).Fill().Padding(m.bodyHeight+10, m.pad, 28, m.pad).Gap(20).Children(func() {
+			a.savedRow(c)
+			ui.Column(c).Gap(10).FillWidth().Children(func() {
+				ui.Text(c, "最近播放").FontSize(15).Bold().Padding(0, 2)
+				if len(a.hist.list) == 0 {
+					ui.Text(c, "看过的剧会出现在这里，点一下接着看。").FontSize(12).TextColor(t.TextMuted).Padding(2, 4)
+					return
+				}
+				ui.ScrollHorizontal(c).Scrollbars(false).Shrink(0).Children(func() {
+					ui.Row(c).Gap(6).Children(func() {
+						for _, f := range []struct{ id, label string }{
+							{"", "全部"}, {"want", "想看"}, {"watching", "正在看"}, {"done", "已看完"},
+						} {
+							if a.recentFilterButton(c, f.id, f.label) {
+								a.recentFilter = f.id
+							}
+						}
+					})
+				})
+				items := a.hist.filtered(a.recentFilter)
+				if len(items) == 0 {
+					ui.Text(c, "还没有这样的剧").FontSize(12).TextColor(t.TextMuted).Padding(2, 4)
+					return
+				}
+				ui.Column(c).Gap(2).FillWidth().Children(func() {
+					for _, w := range items[:min(len(items), 40)] {
+						a.recentRow(c, w)
+					}
+				})
+			})
+		})
+		ui.Column(c).Absolute().Top(0).Left(0).Right(0).Children(func() { a.header(c, "我的", nil) })
+	})
+}
+
+// savedRow is the way from 我的 to the saved series.
+func (a *app) savedRow(c *ui.Context) {
+	t := c.Theme()
+	n := len(a.favs.list)
+	b := ui.ButtonBase(c.Key("saved")).FillWidth().Height(52).Padding(0, 14).Radius(12).
+		Label("我的收藏").Cursor(ui.CursorPointer)
+	if b.Hovered() || b.Pressed() {
+		b.Background(t.Text.Alpha(0.07))
+	} else {
+		b.Background(t.Text.Alpha(0.05))
+	}
+	b.Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, iconStar).Size(18, 18).Shrink(0).TextColor(t.Accent)
+			ui.Text(c, "我的收藏").FontSize(14).FontWeight(500).Grow(1).MinWidth(0)
+			if n > 0 {
+				ui.Textf(c, "%d", n).FontSize(12).TextColor(t.TextMuted).FontFeatures("tnum")
+			}
+			ui.Icon(c, iconChevron).Size(13, 13).Shrink(0).TextColor(t.TextMuted.Alpha(0.6))
+		})
+	})
+	if b.Clicked() {
+		a.router.Push("/favorites")
+	}
+}
+
+// recentRow is a series watched lately: its cover, its title and where the
+// viewer is in it.
+func (a *app) recentRow(c *ui.Context, w watch) {
+	t := c.Theme()
+	b := ui.ButtonBase(c.Key("recent:"+w.SeriesID)).FillWidth().Padding(6, 4).Radius(10).
+		Label(w.Title).Cursor(ui.CursorPointer)
+	if b.Hovered() || b.Pressed() {
+		b.Background(t.Text.Alpha(0.06))
+	}
+	b.Children(func() {
+		// The row fills the button: a row that only takes its content's
+		// width is centred, which pushes each poster to a different left.
+		ui.Row(c).Gap(12).AlignItems(ui.Center).FillWidth().Children(func() {
+			a.poster(c, w.Cover, 6, false).Size(44, 59).Shrink(0)
+			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+				ui.Text(c, w.Title).FontSize(13.5).FontWeight(500).SingleLine()
+				ui.Text(c, recentLine(w)).FontSize(11.5).TextColor(t.TextMuted).SingleLine()
+			})
+			ui.Icon(c, iconChevron).Size(13, 13).Shrink(0).TextColor(t.TextMuted.Alpha(0.6))
+		})
+	})
+	if b.Clicked() {
+		a.router.Push("/series/" + w.SeriesID)
+	}
+}
+
+// recentLine says where the viewer is in a series, in a few words.
+func recentLine(w watch) string {
+	switch w.status() {
+	case "want":
+		return "想看"
+	case "done":
+		return "已看完"
+	}
+	if w.Total > 0 {
+		return fmt.Sprintf("看到第 %d 集 / 共 %d 集", w.Episode, w.Total)
+	}
+	return fmt.Sprintf("看到第 %d 集", w.Episode)
 }
 
 // favLabel names the action on a series that is, or is not, saved.
@@ -766,6 +1108,40 @@ func (a *app) playerAppearance(on bool) {
 	if a.playerTheme != "" {
 		mygo.Theme.SetSource(a.playerTheme)
 		a.playerTheme = ""
+	}
+}
+
+// playerBars keeps the system's bars in their place: they show on every
+// page, and go only while the picture fills the screen, where the layout
+// draws a row of its own. The window's own background fills what the bars'
+// insets leave — the band at the screen's edge — so it is blacked for the
+// player and left light elsewhere.
+func (a *app) playerBars(on bool) {
+	if !onPhone {
+		return
+	}
+	if a.win != nil {
+		bg := "#FFFFFF"
+		if on {
+			bg = "#000000"
+		}
+		if bg != a.barsBG {
+			a.barsBG = bg
+			_ = a.win.SetBackgroundColor(bg)
+		}
+	}
+	style := mygo.BarStyleAuto
+	if on {
+		style = mygo.BarStyleLight
+	}
+	if style != a.barsStyle {
+		a.barsStyle = style
+		mygo.SystemBars.SetStyle(style)
+	}
+	hidden := on && a.landscapeFull
+	if hidden != a.barsHidden {
+		a.barsHidden = hidden
+		mygo.SystemBars.SetHidden(hidden)
 	}
 }
 

@@ -1,9 +1,9 @@
 {
   "name": "开心果",
   "identifier": "com.kadaliao.kaixinguo",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "out": "build",
-  "updates": {
+  "_updates": {
     "publicKey": "gA0G+GwNuhQzP4I5TriLK5w1mPnqCMaVyfXFjElAVaY=",
     "github": "kadaliao/kaixinguo"
   }

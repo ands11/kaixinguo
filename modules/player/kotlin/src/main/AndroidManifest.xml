@@ -1,0 +1,9 @@
+<!-- The player's library manifest. The app's manifest merger takes the
+     application's attributes from here, so the app points at this network
+     security config: the player and the page's video fetch their streams
+     from the local proxy at http://127.0.0.1, which Android's cleartext
+     policy blocks by default (ExoPlayer fails with ERROR_CODE_IO
+     2007, and the page's video spins without an error). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+</manifest>

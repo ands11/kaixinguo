@@ -1,0 +1,16 @@
+// The Kotlin of the native module player: an Android library, which mygo
+// build adds to the app's Gradle build. The build sets its SDK levels, Java
+// and Kotlin, and its dependency on MyGo's host library (dev.mygo), which
+// brings coroutines: add only what the implementation uses.
+plugins {
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.github.kadaliao.kaixinguo.modules.player"
+}
+
+dependencies {
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+}

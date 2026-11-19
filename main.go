@@ -4,9 +4,13 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net/url"
 	"path/filepath"
+	"time"
+
+	playermod "github.com/kadaliao/kaixinguo/modules/player"
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
@@ -37,6 +41,21 @@ type app struct {
 	// The first launch's tour, until it is finished or skipped.
 	tutorialOn   bool
 	tutorialStep int
+
+	// compact is set while the window is a phone's—every mobile build, and
+	// a desktop window narrower than compactWidth—and the app shows tabs
+	// under its pages instead of the sidebar.
+	compact bool
+	// barsHidden is whether the full-screen player hid the system's bars,
+	// so that they are asked for only when they change; barsBG and
+	// barsStyle are the colours last given them.
+	barsHidden bool
+	barsBG     string
+	barsStyle  mygo.BarStyle
+	// batt is the battery the full screen's row shows, read again every
+	// now and then rather than on every frame.
+	batt   mygo.BatteryStatus
+	battAt time.Time
 
 	// The sidebar.
 	query        string
@@ -104,12 +123,59 @@ type app struct {
 	js        chan string // what the page runs, in order
 	onPlayer  bool
 	playerSet bool // the player page has its system settings
+	// The native player, where the platform has one: Android plays with
+	// ExoPlayer in its own view, and nil here keeps the web view playing.
+	player       playermod.Player
+	eventSub     io.Closer
+	timeSub      io.Closer
+	playerRate   float64   // the speed the native player plays at
+	holdOn       bool      // the player's tutorial holds playback
+	lastProgress time.Time // the last playhead the history recorded
+	dm           *danmakuUI
+	// The bar the phone's player draws itself: where its slider sits, that
+	// it is being dragged, and its speeds open.
+	seekPos  float64
+	seeking  bool
+	rateOpen bool
 	// playerChrome is whether the page's bottom bar is showing. In the
 	// theater the top buttons hide and come back with it.
 	playerChrome bool
 	// playerTopHovered is whether the pointer was over the top buttons,
 	// which keeps them as the bar hides.
 	playerTopHovered bool
+
+	// The phone's three player layouts: whether the video's picture is
+	// wider than it is tall (图二), and whether the screen is turned on
+	// its side for the full-screen player (图三). The rest of the time a
+	// phone plays the way 图一 does.
+	videoLandscape bool
+	landscapeFull  bool
+	// liked is the player's own 点赞, kept until the player closes: the
+	// SDK only reads the series' count.
+	liked bool
+	// dmInput is what the 全屏 player's 弹幕 box holds.
+	dmInput string
+	// moreOpen is whether the phone player's ⋮ menu shows.
+	moreOpen bool
+	// hint is a word of feedback the phone player says for a moment.
+	hint string
+	// chromeGen numbers the auto-hide waits: only the latest one hides.
+	chromeGen int
+	// dmEditing is whether the 弹幕 box is being typed in, which keeps the
+	// buttons up.
+	dmEditing bool
+	// swipeDX is how far the finger has moved sideways on the picture,
+	// and swipeDY up or down: sideways moves the playhead, up or down
+	// steps an episode.
+	swipeDX   float32
+	swipeDY   float32
+	swipeHeld bool
+	// stallTick numbers the waits for a picture that stopped coming: only
+	// the latest one may reload the episode.
+	stallTick int
+	// videoRemount is set for one frame after a turn of the screen, which
+	// is drawn without the picture so the framework places its view again.
+	videoRemount bool
 }
 
 func newApp(dataDir, cacheDir string) *app {
@@ -125,12 +191,17 @@ func newApp(dataDir, cacheDir string) *app {
 		series:       map[string]*seriesPage{},
 		futures:      map[string]*future{},
 		tracks:       map[string]*danmakuTrack{},
+		dm:           newDanmakuUI(),
+		playerRate:   1,
 		danmakuOn:    danmakuOn(dataDir),
 		hist:         loadHistory(dataDir),
 		favs:         loadFavorites(dataDir),
 		playerChrome: true,
 	}
 	a.covers = newCovers(filepath.Join(cacheDir, "covers"), a.update)
+	// 弹幕 show from the first frame when the switch says so: the flight's
+	// on-state starts as the setting, not off until someone toggles it.
+	a.dm.setOn(a.danmakuOn)
 	a.home = newFeed(a.discover)
 	// Last launch's recommendations show at once; fresh ones replace them.
 	if cards := a.loadHomeCache(); len(cards) > 0 {
@@ -148,6 +219,10 @@ func (a *app) update(fn func()) {
 }
 
 func main() {
+	log.SetFlags(0)
+	if err := setPlatformPaths(); err != nil {
+		log.Fatal(err)
+	}
 	dataDir, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
 		log.Fatal(err)
@@ -166,30 +241,82 @@ func main() {
 	if a.proxy, err = newProxy(func(q url.Values) { a.update(func() { a.onPlayerEvent(q) }) }); err != nil {
 		log.Fatal(err)
 	}
-	// What was saved last, as the window closed, reaches the disk.
-	mygo.App.OnQuit(func() {
+	// What was saved last, as the app ended, reaches the disk.
+	save := func() {
 		a.hist.store.flush()
 		a.favs.store.flush()
+	}
+	mygo.App.OnQuit(func() {
+		save()
+		if a.player != nil {
+			a.player.Close()
+		}
+	})
+	// A phone never quits: it goes to the background, where the system may
+	// end it. Save there, and stop the picture — but leave the player
+	// running. Closed there, it would be released, and the app would come
+	// back to a player that never plays another frame.
+	mygo.Power.OnSuspend(func() {
+		save()
+		select {
+		case <-a.ready:
+			a.win.Update(func() {
+				if a.onPlayer {
+					a.pausePlayback()
+				}
+			})
+		default:
+		}
+	})
+	// Back in the foreground, the episode goes on from where it stopped.
+	mygo.Power.OnResume(func() {
+		select {
+		case <-a.ready:
+			a.win.Update(func() {
+				if a.onPlayer && a.player != nil {
+					a.resumePlayback()
+				}
+			})
+		default:
+		}
 	})
 	useUpdater()
 	mygo.App.WhenReady(func() {
-		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:     "开心果",
-			Width:     1180,
-			Height:    760,
-			MinWidth:  780,
-			MinHeight: 520,
-			StateKey:  "main",
+		opts := mygo.WindowOptions{
+			Title:   "开心果",
+			Content: ui.View(a.view),
+		}
+		if !onPhone {
+			// A phone's screen is the window: it fills it, and the system
+			// draws its bars and its edges.
+			opts.Width, opts.Height = 1180, 760
+			opts.MinWidth, opts.MinHeight = 780, 520
+			opts.StateKey = "main"
 			// Hidden, not HiddenInset: the inset style adds a toolbar
 			// taller than the title bar the app draws.
-			TitleBarStyle:        mygo.TitleBarHidden,
-			TrafficLightPosition: &mygo.Point{X: 20, Y: 13},
-			TitleBarHeight:       titleBarHeight,
-			Vibrancy:             mygo.VibrancySidebar,
-			Content:              ui.View(a.view),
-		})
+			opts.TitleBarStyle = mygo.TitleBarHidden
+			opts.TrafficLightPosition = &mygo.Point{X: 20, Y: 13}
+			opts.TitleBarHeight = titleBarHeight
+			opts.Vibrancy = mygo.VibrancySidebar
+		}
+		a.win = mygo.NewWindow(opts)
 		a.fullscreen = a.win.IsFullScreen()
+		log.Println("kaixinguo: window ready")
 		close(a.ready)
+		// Where the platform has a native player, it plays; elsewhere the
+		// player's web view does.
+		if p, err := playermod.NewPlayer(); err == nil {
+			log.Println("kaixinguo: native player ready")
+			a.player = p
+			a.eventSub = p.OnEvent(func(s playermod.State, code string) {
+				a.update(func() { a.playerState(s, code) })
+			})
+			a.timeSub = p.OnTime(func(pos, dur time.Duration) {
+				a.update(func() { a.playerTime(pos, dur) })
+			})
+		} else {
+			log.Printf("kaixinguo: no native player: %v", err)
+		}
 		a.watchUpdates()
 		// The theater follows the window: entering full screen with the
 		// green button does what the theater button does.
