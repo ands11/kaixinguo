@@ -4,6 +4,16 @@
 
 ## [未发布]
 
+## [0.7.0] - 2026-11-24
+
+### 新增
+
+- 设置（⌘,）：可以填一个自己部署的 openhongguo-signer 签名服务。内置签名取不到播放地址时，播放改用签名服务，不用等开心果发新版。部署方法见[部署签名服务](https://github.com/kadaliao/kaixinguo/blob/main/docs/signer.md)。
+
+### 修复
+
+- 红果服务端从 11 月 23 日起拒绝旧格式的匿名请求签名，所有剧集又打不开了（提示「这一集暂时无法匿名播放」）。签名改成与官方 App 一致后已恢复。
+
 ## [0.6.1] - 2026-11-17
 
 ### 修复
@@ -95,7 +105,8 @@
 - 暂不支持分段（DASH/HLS）的长视频
 - 第一次启动要注册匿名设备，网络慢时列表可能要等十几秒才出来；之后启动会先显示缓存
 
-[未发布]: https://github.com/kadaliao/kaixinguo/compare/v0.6.1...HEAD
+[未发布]: https://github.com/kadaliao/kaixinguo/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/kadaliao/kaixinguo/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/kadaliao/kaixinguo/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/kadaliao/kaixinguo/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/kadaliao/kaixinguo/compare/v0.5.0...v0.5.1

@@ -29,11 +29,13 @@ type app struct {
 	win    *mygo.Window
 	ready  chan struct{} // closed once win is set
 	router *ui.Router
-	client *sdk.Client
+	client *client
 	covers *covers
 	hist   *history
 	favs   *favorites
 	proxy  *proxy
+
+	settings settingsForm // the settings dialog
 
 	cacheDir string
 	dataDir  string
@@ -240,6 +242,11 @@ func main() {
 	if a.client, err = newClient(dataDir); err != nil {
 		log.Fatal(err)
 	}
+	if s := loadSignerSettings(dataDir); s.URL != "" {
+		if err := a.client.setSigner(s.URL, s.Token); err != nil {
+			log.Printf("signer: %v", err)
+		}
+	}
 	a.listDanmaku = a.client.ListDanmaku
 	if a.proxy, err = newProxy(func(q url.Values) { a.update(func() { a.onPlayerEvent(q) }) }); err != nil {
 		log.Fatal(err)
@@ -283,7 +290,7 @@ func main() {
 		default:
 		}
 	})
-	useUpdater()
+	useUpdater(a)
 	mygo.App.WhenReady(func() {
 		opts := mygo.WindowOptions{
 			Title:   "开心果",

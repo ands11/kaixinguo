@@ -210,6 +210,7 @@ func (a *app) view(c *ui.Context) {
 	if a.tutorialOn {
 		a.tutorial(c)
 	}
+	a.settingsDialog(c)
 }
 
 // compactView is the app on a phone's screen: a page, with the sections as
