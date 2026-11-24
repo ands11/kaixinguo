@@ -284,6 +284,7 @@ func (a *app) playerEvent(kind string, t, d float64, code string) {
 	case "playing":
 		p.state = playPlaying
 		p.paused = false
+		a.keepScreenOn(true)
 		// Resolve the next episode while this one plays.
 		if next, ok := sp.episode(p.number + 1); ok && next.Playable {
 			a.resolve(next)
@@ -307,12 +308,14 @@ func (a *app) playerEvent(kind string, t, d float64, code string) {
 		if p.state != playPlaying {
 			return
 		}
+		a.keepScreenOn(false)
 		a.recordWatch(sp, p.number, 0, 0, true)
 		// On to the next episode, or the next season's first.
 		if id, n, ok := a.following(sp, p.number); ok {
 			a.play(id, n, 0)
 		}
 	case "error":
+		a.keepScreenOn(false)
 		p.state, p.msg = playFailed, "视频加载失败，请重试"
 		if ep.ID != "" {
 			delete(a.futures, ep.ID)
@@ -458,6 +461,7 @@ func atof(s string) float64 {
 // pausePlayback stops at the playhead: the native player pauses, and the
 // player page's video does.
 func (a *app) pausePlayback() {
+	a.keepScreenOn(false)
 	if a.player != nil {
 		a.player.Pause()
 		return
@@ -497,17 +501,38 @@ func (a *app) togglePlay() {
 		if p := a.cur; p != nil && p.loaded && !a.holdOn {
 			if p.state == playPlaying && !p.paused {
 				a.player.Pause()
-				p.paused = true // the player reports no pause of its own
+				p.paused = true       // the player reports no pause of its own
 				a.playerChrome = true // the bar comes back with a pause
+				a.keepScreenOn(false)
 			} else {
 				a.player.Play()
 				p.paused = false
 				a.playerChromeComeback()
+				a.keepScreenOn(true)
 			}
 		}
 		return
 	}
 	a.evalJS("kx.toggle()")
+}
+
+// keepScreenOn keeps a phone's screen from locking while an episode plays,
+// and lets it lock again when playback stops. Computers have no lock of
+// their own to hold off, and the release runs only once.
+func (a *app) keepScreenOn(on bool) {
+	if !onPhone {
+		return
+	}
+	if on {
+		if a.keepAwake == nil {
+			a.keepAwake = mygo.Power.KeepAwake("开心果正在播放视频", true)
+		}
+		return
+	}
+	if a.keepAwake != nil {
+		a.keepAwake()
+		a.keepAwake = nil
+	}
 }
 
 // seekBy goes d seconds on from the playhead, back or forth.

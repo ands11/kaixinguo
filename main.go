@@ -56,6 +56,9 @@ type app struct {
 	// now and then rather than on every frame.
 	batt   mygo.BatteryStatus
 	battAt time.Time
+	// keepAwake releases the phone's screen from locking while an episode
+	// plays, and is nil while nothing holds it.
+	keepAwake func()
 
 	// The sidebar.
 	query        string
