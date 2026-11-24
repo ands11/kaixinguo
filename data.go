@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beilunyang/openhongguo/adapters"
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
@@ -141,14 +140,6 @@ func (a *app) retry(f *feed) {
 
 func contextTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
-}
-
-func newClient(dir string) (*sdk.Client, error) {
-	opts := sdk.Options{RetryAttempts: 3, DeviceResets: sdk.Int(3)}
-	if os.Getenv("KX_DEBUG") != "" {
-		opts.Logger = log.New(os.Stderr, "sdk: ", log.Ltime|log.Lmicroseconds)
-	}
-	return adapters.NewClient(filepath.Join(dir, "device.json"), opts)
 }
 
 // discover reads the recommended channel one server page at a time, so

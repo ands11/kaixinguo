@@ -104,6 +104,9 @@ brew install --cask kadaliao/tap/kaixinguo
 **有的集数带一把锁？**
 那一集需要登录红果账号才能看，开心果不提供登录。
 
+**红果又改了接口，所有剧集都播不了？**
+开心果用 openhongguo 内置的签名取播放地址，红果收紧签名校验后可能要等开心果发新版才能恢复。等待期间可以自己部署一个 [openhongguo-signer](https://github.com/beilunyang/openhongguo/blob/main/signer/README.md) 签名服务，在菜单「开心果 → 设置…」（⌘,）里填上它的地址和 token。之后内置签名取不到播放地址时，开心果会改用签名服务；只有播放请求会经过它，其他请求不受影响。
+
 **加载失败或者播放卡住？**
 从终端启动并打开调试日志，会打印每个请求，方便提 issue 时附上：
 

@@ -145,6 +145,7 @@ func (a *app) view(c *ui.Context) {
 	if a.tutorialOn {
 		a.tutorial(c)
 	}
+	a.settingsDialog(c)
 }
 
 func (a *app) sidebar(c *ui.Context, vibrant bool) {

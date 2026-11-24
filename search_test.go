@@ -84,7 +84,7 @@ func TestSearchFallsBackToGeneralWhenSeriesTabIsEmpty(t *testing.T) {
 		return searchTab(tab, "7675743518228220953", "浅浅归聿", true)
 	})
 	a := testApp(t)
-	a.client = client
+	a.client = withFallback(client, nil)
 	fetch := a.searchFetcher("归聿")
 	p, err := fetch(context.Background(), "")
 	if err != nil {
@@ -119,7 +119,7 @@ func TestSearchListsSeasonsFromSeriesTab(t *testing.T) {
 		return searchTab(tab, "7697488144291250712", "持械入宋第十季预约开启", false)
 	})
 	a := testApp(t)
-	a.client = client
+	a.client = withFallback(client, nil)
 	p, err := a.searchFetcher("持械入宋")(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)

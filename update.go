@@ -23,13 +23,19 @@ var updaterOptions = updater.Options{
 // after launch and then once a day, and offer it in a window: install it,
 // remind later, or skip it. The app's menu checks on demand. Builds without
 // the update key in mygo.json, as mygo dev's, never check.
-func useUpdater() {
+func useUpdater(a *app) {
 	mygo.Use(native.New(updaterOptions))
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
-		// The default app menu, with 检查更新… after About.
+		// The default app menu, with 检查更新… after About and 设置… after it.
 		{Label: mygo.App.Name(), Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleAbout},
 			updater.MenuItem(),
+			mygo.Separator(),
+			{Label: "设置…", Accelerator: "CmdOrCtrl+,", Click: func(_ *mygo.MenuItem, win *mygo.Window) {
+				if a.win != nil {
+					a.win.Update(a.openSettings)
+				}
+			}},
 			mygo.Separator(),
 			{Role: mygo.RoleServices},
 			mygo.Separator(),
