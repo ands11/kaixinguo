@@ -8,7 +8,7 @@ import "github.com/egoist/mygo/ui"
 // system handles: there is no release to download and no menu bar to check
 // from, so the updater is left out of the build and these do nothing.
 
-func useUpdater() {}
+func useUpdater(a *app) {}
 
 func (a *app) watchUpdates() {}
 

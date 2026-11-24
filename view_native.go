@@ -194,7 +194,7 @@ func (a *app) seekSlider(c *ui.Context) bool {
 func (a *app) playerIconButton(c *ui.Context, key string, icon, alt *ui.SVG, label string) bool {
 	b := ui.ButtonBase(c.Key(key)).Size(32, 32).Shrink(0).Radius(10).Center().
 		Label(label).TextColor(barBright)
-	if alt != nil && a.cur != nil && a.cur.state == playPlaying {
+	if alt != nil && a.cur != nil && a.cur.state == playPlaying && !a.cur.paused {
 		icon = alt
 	}
 	b.Children(func() {

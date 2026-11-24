@@ -209,10 +209,9 @@ func (a *app) phoneCenterPlay(c *ui.Context) bool {
 	}
 	w, h := c.Size()
 	b := ui.ButtonBase(c.Key("center-play")).Absolute().Left(w/2 - 28).Top(h/2 - 28).
-		Size(56, 56).Radius(28).
-		Background(ui.RGBA(252, 252, 252, 0.92)).Center().Label("播放或暂停")
+		Size(56, 56).Radius(28).Center().Label("播放或暂停")
 	b.Children(func() {
-		ui.Icon(c, ternIcon(playing, iconPause, iconPlay)).Size(24, 24).TextColor(ui.RGBA(64, 64, 64, 0.92))
+		ui.Icon(c, ternIcon(playing, iconPause, iconPlay)).Size(48, 48).TextColor(barBright)
 	})
 	if b.Clicked() {
 		a.togglePlay()
