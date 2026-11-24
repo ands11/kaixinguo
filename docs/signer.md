@@ -95,9 +95,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -d '{}' https://signer.example.
 ### 3. 在开心果里填上
 
 - **macOS**：菜单「开心果 → 设置…」（⌘,）。
-- **iOS / Apple TV、Android**：应用里的「设置」。
+- **iOS、Android**：「我的」页右上角的齿轮。
+- **Apple TV**：「我的」页底部的「设置」。
 
 「地址」填 `https://signer.example.com`，「Token」填 `.env` 里 `SIGNER_TOKEN=` 后面的值。保存时开心果会先检查一遍，能分辨连不上、还在启动、token 不对这几种情况。签名服务暂时不在线也可以点「仍然保存」。
+
+手机上请用 `https://` 地址。iOS 只允许检查局域网里的 `http://` 地址，Android 完全不能检查 `http://` 地址，这时会提示检查失败，点「仍然保存」也能用，但最好还是开 HTTPS。
 
 清空地址再保存，就不再使用签名服务。
 
