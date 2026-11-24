@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+## [0.7.1] - 2026-11-25
+
+### 修复
+
+- 红果服务端从 11 月 24 日晚起，播放接口对匿名请求只返回空内容，所有剧集又打不开了（提示「这一集暂时无法匿名播放」），配了签名服务也一样。播放接口取不到时改走另一条通道后已恢复。
+
 ## [0.7.0] - 2026-11-24
 
 ### 新增
@@ -105,7 +111,8 @@
 - 暂不支持分段（DASH/HLS）的长视频
 - 第一次启动要注册匿名设备，网络慢时列表可能要等十几秒才出来；之后启动会先显示缓存
 
-[未发布]: https://github.com/kadaliao/kaixinguo/compare/v0.7.0...HEAD
+[未发布]: https://github.com/kadaliao/kaixinguo/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/kadaliao/kaixinguo/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/kadaliao/kaixinguo/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/kadaliao/kaixinguo/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/kadaliao/kaixinguo/compare/v0.5.1...v0.6.0
