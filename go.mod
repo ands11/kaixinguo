@@ -24,4 +24,4 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 )
 
-replace github.com/beilunyang/openhongguo => github.com/kadaliao/openhongguo v0.4.1-kx.2
+replace github.com/beilunyang/openhongguo => github.com/kadaliao/openhongguo v0.4.1-kx.4
