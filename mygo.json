@@ -3,7 +3,7 @@
   "identifier": "com.kadaliao.kaixinguo",
   "version": "0.7.2",
   "out": "build",
-  "_updates": {
+  "updates": {
     "publicKey": "gA0G+GwNuhQzP4I5TriLK5w1mPnqCMaVyfXFjElAVaY=",
     "github": "kadaliao/kaixinguo"
   }

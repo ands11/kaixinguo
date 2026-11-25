@@ -2,3 +2,4 @@
 /.mygo/
 /.tmp/
 mygo_windows_*.syso
+/*.exe*
